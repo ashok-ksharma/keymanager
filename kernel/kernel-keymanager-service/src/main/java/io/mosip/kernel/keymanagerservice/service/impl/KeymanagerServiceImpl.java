@@ -102,6 +102,11 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 
 	private static final Logger LOGGER = KeymanagerLogger.getLogger(KeymanagerServiceImpl.class);
 
+	private static final long KEYMANAGER_PERF_SLOW_THRESHOLD_MS = 500L;
+
+	private static final String KEYMANAGER_PERF_SLOW_MARKER =
+			"*** KEYMANAGER_PERF_SLOW (>" + KEYMANAGER_PERF_SLOW_THRESHOLD_MS + "ms) ***";
+
 	@Value("${mosip.root.key.applicationid:ROOT}")
 	private String rootKeyApplicationId;
 
@@ -303,8 +308,10 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 			LOGGER.info(KeymanagerConstant.SESSIONID, KeymanagerConstant.CURRENTKEYALIAS,
 					currentKeyAlias.get(0).getAlias(),
 					"CurrentKeyAlias size is one. Will fetch keypair using this alias");
+			long perfStart = System.currentTimeMillis();
 			Optional<io.mosip.kernel.keymanagerservice.entity.KeyStore> keyFromDBStore = dbHelper
 					.getKeyStoreFromDB(currentKeyAlias.get(0).getAlias());
+			logKeymanagerPerf(KeymanagerConstant.GETPUBLICKEYDB, "getKeyStoreFromDB", perfStart);
 			if (!keyFromDBStore.isPresent()) {
 				LOGGER.info(KeymanagerConstant.SESSIONID, KeymanagerConstant.KEYFROMDB, keyFromDBStore.toString(),
 						"Key in DBStore does not exist for this alias. Throwing exception");
@@ -317,7 +324,9 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 				KeyAlias fetchedKeyAlias = currentKeyAlias.get(0);
 				alias = fetchedKeyAlias.getAlias();
 				String certificateData = keyFromDBStore.get().getCertificateData();
+				perfStart = System.currentTimeMillis();
 				x509Cert = (X509Certificate) keymanagerUtil.convertToCertificate(certificateData);
+				logKeymanagerPerf(KeymanagerConstant.GETPUBLICKEYDB, "convertToCertificate", perfStart);
 			}
 		} else if (currentKeyAlias.isEmpty()) {
 			LOGGER.info(KeymanagerConstant.SESSIONID, KeymanagerConstant.CURRENTKEYALIAS,
@@ -748,7 +757,9 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 			}
 
 			KeyPairGenerateResponseDto responseDto = new KeyPairGenerateResponseDto();
+			long pemStart = System.currentTimeMillis();
 			responseDto.setCertificate(keymanagerUtil.getPEMFormatedData(x509Cert));
+			logKeymanagerPerf(KeymanagerConstant.GET_CERTIFICATE, "getPEMFormatedData(buildResponseObject)", pemStart);
 			responseDto.setExpiryAt(DateUtils2.parseDateToLocalDateTime(x509Cert.getNotAfter()));
 			responseDto.setIssuedAt(DateUtils2.parseDateToLocalDateTime(x509Cert.getNotBefore()));
 			responseDto.setTimestamp(timestamp);
@@ -820,7 +831,9 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 		
 		X509Certificate x509Cert = certificateData.getCertificate();
 		KeyPairGenerateResponseDto responseDto = new KeyPairGenerateResponseDto();
+		long pemStart = System.currentTimeMillis();
 		responseDto.setCertificate(keymanagerUtil.getPEMFormatedData(x509Cert));
+		logKeymanagerPerf(KeymanagerConstant.GET_CERTIFICATE, "getPEMFormatedData(getCertificate)", pemStart);
 		responseDto.setExpiryAt(DateUtils2.parseDateToLocalDateTime(x509Cert.getNotAfter()));
 		responseDto.setIssuedAt(DateUtils2.parseDateToLocalDateTime(x509Cert.getNotBefore()));
 		responseDto.setTimestamp(localDateTimeStamp);
@@ -1406,5 +1419,14 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 		responseDto.setCertificatesTrustPath(buildTrustPath);
 		responseDto.setTimestamp(timeStamp);
 		return responseDto;
+	}
+
+	private void logKeymanagerPerf(String phaseKey, String step, long startedAtMillis) {
+		long elapsedMillis = System.currentTimeMillis() - startedAtMillis;
+		String message = "perf: " + step + " took " + elapsedMillis + " ms";
+		if (elapsedMillis > KEYMANAGER_PERF_SLOW_THRESHOLD_MS) {
+			message += " " + KEYMANAGER_PERF_SLOW_MARKER;
+		}
+		LOGGER.info(KeymanagerConstant.SESSIONID, phaseKey, phaseKey, message);
 	}
 }
