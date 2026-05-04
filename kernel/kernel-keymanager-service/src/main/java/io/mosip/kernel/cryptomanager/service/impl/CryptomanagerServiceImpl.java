@@ -84,6 +84,11 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 
 	private static final int AES_KEY_SIZE = 128;
 
+	/** Perf logs above this duration (exclusive) append {@link #PERF_SLOW_MARKER} for easy filtering. */
+	private static final long PERF_SLOW_THRESHOLD_MS = 500L;
+
+	private static final String PERF_SLOW_MARKER = "*** PERF_SLOW_STEP (>" + PERF_SLOW_THRESHOLD_MS + "ms) ***";
+
 	private String AES_GCM_ALGO = "AES/GCM/NoPadding";
 
 	private static final Logger LOGGER = KeymanagerLogger.getLogger(CryptomanagerServiceImpl.class);
@@ -186,11 +191,19 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 	 */
 	@Override
 	public CryptomanagerResponseDto encrypt(CryptomanagerRequestDto cryptoRequestDto) {
+		long totalStart = System.currentTimeMillis();
 		LOGGER.info(CryptomanagerConstant.SESSIONID, CryptomanagerConstant.ENCRYPT, CryptomanagerConstant.ENCRYPT, 
 						"Request for data encryption.");
 		
+		long stepStart = System.currentTimeMillis();
 		cryptomanagerUtil.validateKeyIdentifierIds(cryptoRequestDto.getApplicationId(), cryptoRequestDto.getReferenceId());
+		logPerf(CryptomanagerConstant.ENCRYPT, "validateKeyIdentifierIds", stepStart);
+
+		stepStart = System.currentTimeMillis();
 		SecretKey secretKey = keyGenerator.getSymmetricKey();
+		logPerf(CryptomanagerConstant.ENCRYPT, "getSymmetricKey", stepStart);
+
+		stepStart = System.currentTimeMillis();
 		final byte[] encryptedData;
 		byte[] headerBytes = new byte[0];
 		if (cryptomanagerUtil.isValidSalt(CryptomanagerUtils.nullOrTrim(cryptoRequestDto.getSalt()))) {
@@ -207,12 +220,17 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 										aad);
 			}
 		}
+		logPerf(CryptomanagerConstant.ENCRYPT, "symmetricEncryptData", stepStart);
 
+		stepStart = System.currentTimeMillis();
 		Certificate certificate = cryptomanagerUtil.getCertificate(cryptoRequestDto);
+		logPerf(CryptomanagerConstant.ENCRYPT, "getCertificate", stepStart);
 		LOGGER.info(CryptomanagerConstant.SESSIONID, CryptomanagerConstant.ENCRYPT, CryptomanagerConstant.ENCRYPT, 
 						"Found the cerificate, proceeding with session key encryption.");
 		PublicKey publicKey = certificate.getPublicKey();
+		stepStart = System.currentTimeMillis();
 		final byte[] encryptedSymmetricKey = cryptoCore.asymmetricEncrypt(publicKey, secretKey.getEncoded());
+		logPerf(CryptomanagerConstant.ENCRYPT, "asymmetricEncryptSessionKey", stepStart);
 		LOGGER.info(CryptomanagerConstant.SESSIONID, CryptomanagerConstant.ENCRYPT, CryptomanagerConstant.ENCRYPT, 
 						"Session key encryption completed.");
 		//boolean prependThumbprint = cryptoRequestDto.getPrependThumbprint() == null ? false : cryptoRequestDto.getPrependThumbprint();
@@ -228,11 +246,14 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 			return cryptoResponseDto;
 		} */ 
 		//---------------------
+		stepStart = System.currentTimeMillis();
 		byte[] certThumbprint = cryptomanagerUtil.getCertificateThumbprint(certificate);
 		byte[] concatedData = cryptomanagerUtil.concatCertThumbprint(certThumbprint, encryptedSymmetricKey);
 		byte[] finalEncKeyBytes = cryptomanagerUtil.concatByteArrays(headerBytes, concatedData);
 		cryptoResponseDto.setData(CryptoUtil.encodeToURLSafeBase64(CryptoUtil.combineByteArray(encryptedData, 
 							finalEncKeyBytes, keySplitter)));
+		logPerf(CryptomanagerConstant.ENCRYPT, "thumbprintCombineAndBase64Encode", stepStart);
+		logPerf(CryptomanagerConstant.ENCRYPT, "encrypt(total)", totalStart);
 		return cryptoResponseDto;
 	}
 
@@ -256,16 +277,20 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 	 */
 	@Override
 	public CryptomanagerResponseDto decrypt(CryptomanagerRequestDto cryptoRequestDto) {
+		long totalStart = System.currentTimeMillis();
 		LOGGER.info(CryptomanagerConstant.SESSIONID, CryptomanagerConstant.DECRYPT, CryptomanagerConstant.DECRYPT, 
 						"Request for data decryption.");
 
+		long stepStart = System.currentTimeMillis();
 		boolean hasAcccess = cryptomanagerUtil.hasKeyAccess(cryptoRequestDto.getApplicationId());
+		logPerf(CryptomanagerConstant.DECRYPT, "hasKeyAccess", stepStart);
 		if (!hasAcccess) {
 			LOGGER.error(CryptomanagerConstant.SESSIONID, CryptomanagerConstant.DECRYPT, CryptomanagerConstant.DECRYPT,
 								"Data Decryption is not allowed for the authenticated user for the provided application id.");
 			throw new CryptoManagerSerivceException(CryptomanagerErrorCode.DECRYPT_NOT_ALLOWED_ERROR.getErrorCode(),
 						CryptomanagerErrorCode.DECRYPT_NOT_ALLOWED_ERROR.getErrorMessage());
 		}
+		stepStart = System.currentTimeMillis();
         byte[] encryptedHybridData = cryptomanagerUtil.decodeBase64Data(cryptoRequestDto.getData());
         int keyDelimiterIndex = CryptoUtil.getSplitterIndex(encryptedHybridData, 0, keySplitter);
 
@@ -284,11 +309,15 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
         byte[] rawKey = new byte[encryptedKey.length - headerLength];
         System.arraycopy(encryptedKey, headerLength, rawKey, 0, rawKey.length);
         cryptoRequestDto.setData(CryptoUtil.encodeToURLSafeBase64(rawKey));
+		logPerf(CryptomanagerConstant.DECRYPT, "parseHybridPayloadAndHeader", stepStart);
 
+		stepStart = System.currentTimeMillis();
         SecretKey decryptedSymmetricKey = cryptomanagerUtil.getDecryptedSymmetricKey(cryptoRequestDto);
+		logPerf(CryptomanagerConstant.DECRYPT, "getDecryptedSymmetricKey", stepStart);
         LOGGER.info(CryptomanagerConstant.SESSIONID, CryptomanagerConstant.DECRYPT,
                 CryptomanagerConstant.DECRYPT, "Session Key Decryption completed.");
 
+		stepStart = System.currentTimeMillis();
         final byte[] decryptedData;
         String salt = CryptomanagerUtils.nullOrTrim(cryptoRequestDto.getSalt());
         String aad = CryptomanagerUtils.nullOrTrim(cryptoRequestDto.getAad());
@@ -309,10 +338,14 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
                         cryptomanagerUtil.decodeBase64Data(aad));
             }
         }
+		logPerf(CryptomanagerConstant.DECRYPT, "symmetricDecryptData", stepStart);
 		LOGGER.info(CryptomanagerConstant.SESSIONID, CryptomanagerConstant.DECRYPT, CryptomanagerConstant.DECRYPT, 
 						"Data decryption completed.");
 		CryptomanagerResponseDto cryptoResponseDto = new CryptomanagerResponseDto();
+		stepStart = System.currentTimeMillis();
 		cryptoResponseDto.setData(CryptoUtil.encodeToURLSafeBase64(decryptedData));
+		logPerf(CryptomanagerConstant.DECRYPT, "encodeResponsePayload", stepStart);
+		logPerf(CryptomanagerConstant.DECRYPT, "decrypt(total)", totalStart);
 		return cryptoResponseDto;
 	}
 
@@ -420,10 +453,11 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 
 	@Override
 	public JWTCipherResponseDto jwtEncrypt(JWTEncryptRequestDto jwtEncryptRequestDto) {
-		
+		long totalStart = System.currentTimeMillis();
 		LOGGER.info(CryptomanagerConstant.SESSIONID, this.getClass().getSimpleName(), CryptomanagerConstant.JWT_ENCRYPT, 
 						"Request for JWE Encryption. Input Application Id:"  + jwtEncryptRequestDto.getApplicationId() + 
 						", Reference Id: " + jwtEncryptRequestDto.getReferenceId());
+		long stepStart = System.currentTimeMillis();
 		Certificate encCertificate = null;
 		if (cryptomanagerUtil.isDataValid(jwtEncryptRequestDto.getX509Certificate())) {
 			encCertificate = cryptomanagerUtil.convertToCertificate(jwtEncryptRequestDto.getX509Certificate());
@@ -435,14 +469,18 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 			// getCertificate should return a valid certificate for encryption. If no certificate is available,
 			// getCertificate will automatically throws an exception. So not checking for null for encCertificate. 
 		}
+		logPerf(CryptomanagerConstant.JWT_ENCRYPT, "resolveEncryptionCertificate", stepStart);
 
 		LOGGER.info(CryptomanagerConstant.SESSIONID, this.getClass().getSimpleName(), CryptomanagerConstant.JWT_ENCRYPT, 
 						"Found the cerificate, Validating Encryption Certificate key size.");
+		stepStart = System.currentTimeMillis();
 		cryptomanagerUtil.validateEncKeySize(encCertificate);
+		logPerf(CryptomanagerConstant.JWT_ENCRYPT, "validateEncKeySize", stepStart);
 		LOGGER.info(CryptomanagerConstant.SESSIONID, this.getClass().getSimpleName(), CryptomanagerConstant.JWT_ENCRYPT, 
 						"Key Size validated, validing input data.");
 		
 		String dataToEncrypt = jwtEncryptRequestDto.getData();
+		stepStart = System.currentTimeMillis();
 		cryptomanagerUtil.validateEncryptData(dataToEncrypt);
 
 		String decodedDataToEncrypt = dataToEncrypt;
@@ -450,6 +488,7 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 			decodedDataToEncrypt = new String(CryptoUtil.decodeURLSafeBase64(dataToEncrypt));
 			cryptomanagerUtil.checkForValidJsonData(decodedDataToEncrypt);
 		}
+		logPerf(CryptomanagerConstant.JWT_ENCRYPT, "validateAndDecodePayload", stepStart);
 
 		LOGGER.info(CryptomanagerConstant.SESSIONID, this.getClass().getSimpleName(), CryptomanagerConstant.JWT_ENCRYPT, 
 						"Input Data validated, proceeding with JWE Encryption.");
@@ -464,11 +503,14 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 		String certificateUrl = cryptomanagerUtil.isDataValid(jwtEncryptRequestDto.getJwkSetUrl()) ? 
 												jwtEncryptRequestDto.getJwkSetUrl(): null;
 
+		stepStart = System.currentTimeMillis();
 		String jweEncryptedData = jwtRsaOaep256AesGcmEncrypt(decodedDataToEncrypt, encCertificate, enableDefCompression, 
 									includeCertificate, includeCertHash, certificateUrl);
+		logPerf(CryptomanagerConstant.JWT_ENCRYPT, "jwtRsaOaep256AesGcmEncrypt", stepStart);
 		JWTCipherResponseDto jwtCipherResponseDto = new JWTCipherResponseDto();
 		jwtCipherResponseDto.setData(jweEncryptedData);
 		jwtCipherResponseDto.setTimestamp(DateUtils2.getUTCCurrentDateTime());
+		logPerf(CryptomanagerConstant.JWT_ENCRYPT, "jwtEncrypt(total)", totalStart);
 		return jwtCipherResponseDto;
 	}
 
@@ -507,7 +549,9 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
 		}
 		jsonWebEncrypt.setPayload(dataToEncrypt);
 		try {
+			long compactStart = System.currentTimeMillis();
 			String encryptedData = jsonWebEncrypt.getCompactSerialization();
+			logPerf(CryptomanagerConstant.JWT_ENCRYPT, "jose4jGetCompactSerialization", compactStart);
 			LOGGER.info(CryptomanagerConstant.SESSIONID, this.getClass().getSimpleName(), CryptomanagerConstant.JWT_ENCRYPT, 
 					"JWE Encryption Completed.");
 			return encryptedData;
@@ -659,5 +703,14 @@ public class CryptomanagerServiceImpl implements CryptomanagerService {
         byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
         return bytes;
+	}
+
+	private void logPerf(String phaseKey, String step, long startedAtMillis) {
+		long elapsedMillis = System.currentTimeMillis() - startedAtMillis;
+		String message = "perf: " + step + " took " + elapsedMillis + " ms";
+		if (elapsedMillis > PERF_SLOW_THRESHOLD_MS) {
+			message += " " + PERF_SLOW_MARKER;
+		}
+		LOGGER.info(CryptomanagerConstant.SESSIONID, phaseKey, phaseKey, message);
 	}
 }
