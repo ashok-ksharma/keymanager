@@ -289,6 +289,16 @@ public class KeymanagerDBHelper {
         } */
         return dbKeyStore;
     }
+
+    /**
+    * Function to fetch only certificate data from Keystore table.
+    *
+    * @param keyAlias alias of the key.
+    * @return Optional of certificate data.
+    */
+    public Optional<String> getCertificateDataFromDB(String keyAlias) {
+        return keyStoreRepository.findCertificateDataByAlias(keyAlias);
+    }
     
     /**
     * Function to fetch KeyPolicy from DB.

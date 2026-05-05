@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import io.mosip.kernel.keymanagerservice.entity.KeyStore;
@@ -26,6 +28,9 @@ public interface KeyStoreRepository extends JpaRepository<KeyStore, String> {
 	 * @return KeyStore
 	 */
 	Optional<KeyStore> findByAlias(String alias);
+
+	@Query("SELECT k.certificateData FROM KeyStore k WHERE k.alias = :alias")
+	Optional<String> findCertificateDataByAlias(@Param("alias") String alias);
 
 
 	/**

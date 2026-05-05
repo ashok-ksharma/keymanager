@@ -309,11 +309,10 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 					currentKeyAlias.get(0).getAlias(),
 					"CurrentKeyAlias size is one. Will fetch keypair using this alias");
 			long perfStart = System.currentTimeMillis();
-			Optional<io.mosip.kernel.keymanagerservice.entity.KeyStore> keyFromDBStore = dbHelper
-					.getKeyStoreFromDB(currentKeyAlias.get(0).getAlias());
-			logKeymanagerPerf(KeymanagerConstant.GETPUBLICKEYDB, "getKeyStoreFromDB", perfStart);
-			if (!keyFromDBStore.isPresent()) {
-				LOGGER.info(KeymanagerConstant.SESSIONID, KeymanagerConstant.KEYFROMDB, keyFromDBStore.toString(),
+			Optional<String> certificateDataFromDB = dbHelper.getCertificateDataFromDB(currentKeyAlias.get(0).getAlias());
+			logKeymanagerPerf(KeymanagerConstant.GETPUBLICKEYDB, "getCertificateDataFromDB", perfStart);
+			if (!certificateDataFromDB.isPresent()) {
+				LOGGER.info(KeymanagerConstant.SESSIONID, KeymanagerConstant.KEYFROMDB, certificateDataFromDB.toString(),
 						"Key in DBStore does not exist for this alias. Throwing exception");
 				throw new NoUniqueAliasException(KeymanagerErrorConstant.NO_UNIQUE_ALIAS.getErrorCode(),
 						KeymanagerErrorConstant.NO_UNIQUE_ALIAS.getErrorMessage());
@@ -323,7 +322,7 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 						"Key in DBStore exists for this alias. Fetching Certificate.");
 				KeyAlias fetchedKeyAlias = currentKeyAlias.get(0);
 				alias = fetchedKeyAlias.getAlias();
-				String certificateData = keyFromDBStore.get().getCertificateData();
+				String certificateData = certificateDataFromDB.get();
 				perfStart = System.currentTimeMillis();
 				x509Cert = (X509Certificate) keymanagerUtil.convertToCertificate(certificateData);
 				logKeymanagerPerf(KeymanagerConstant.GETPUBLICKEYDB, "convertToCertificate", perfStart);
