@@ -20,8 +20,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
+import javax.sql.DataSource;
 import javax.security.auth.x500.X500Principal;
 
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
 import io.mosip.kernel.core.util.DateUtils2;
 import io.mosip.kernel.keymanagerservice.dto.AllCertificatesDataResponseDto;
 import io.mosip.kernel.keymanagerservice.dto.CSRGenerateRequestDto;
@@ -128,6 +131,9 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 	@Value("${mosip.kernel.keymanager.ed25519.hsm.support.enabled:false}")
 	private boolean ed25519SupportFlag;
 
+	@Value("${mosip.kernel.keymanager.debug.pool.logging.enabled:true}")
+	private boolean poolDebugLoggingEnabled;
+
 	/**
 	 * Keystore instance to handles and store cryptographic keys.
 	 */
@@ -166,6 +172,9 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 
 	@Autowired
 	SubjectAlternativeNamesHelper sanHelper;
+
+	@Autowired
+	private DataSource dataSource;
 
 	private static Map<String, String> ecRefIdsAlgoNamesMap = new HashMap<>();
 
@@ -309,7 +318,9 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 					currentKeyAlias.get(0).getAlias(),
 					"CurrentKeyAlias size is one. Will fetch keypair using this alias");
 			long perfStart = System.currentTimeMillis();
+			logPoolStats("before-getCertificateDataFromDB");
 			Optional<String> certificateDataFromDB = dbHelper.getCertificateDataFromDB(currentKeyAlias.get(0).getAlias());
+			logPoolStats("after-getCertificateDataFromDB");
 			logKeymanagerPerf(KeymanagerConstant.GETPUBLICKEYDB, "getCertificateDataFromDB", perfStart);
 			if (!certificateDataFromDB.isPresent()) {
 				LOGGER.info(KeymanagerConstant.SESSIONID, KeymanagerConstant.KEYFROMDB, certificateDataFromDB.toString(),
@@ -1427,5 +1438,22 @@ public class KeymanagerServiceImpl implements KeymanagerService {
 			message += " " + KEYMANAGER_PERF_SLOW_MARKER;
 		}
 		LOGGER.info(KeymanagerConstant.SESSIONID, phaseKey, phaseKey, message);
+	}
+
+	private void logPoolStats(String phase) {
+		if (!poolDebugLoggingEnabled || !(dataSource instanceof HikariDataSource)) {
+			return;
+		}
+		HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
+		HikariPoolMXBean mxBean = hikariDataSource.getHikariPoolMXBean();
+		if (mxBean == null) {
+			return;
+		}
+		int waitingThreads = mxBean.getThreadsAwaitingConnection();
+		String message = "pool=" + hikariDataSource.getPoolName() + ", active=" + mxBean.getActiveConnections() + ", idle="
+				+ mxBean.getIdleConnections() + ", total=" + mxBean.getTotalConnections() + ", waiting="
+				+ waitingThreads + " KEYMANAGER_PERF_SLOW";
+		LOGGER.info(KeymanagerConstant.SESSIONID, "DB_POOL", phase,
+				message);
 	}
 }
